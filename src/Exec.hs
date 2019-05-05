@@ -22,6 +22,7 @@ data LangOut =
   -- ^ retuned when the program runs successfully and return a value
   -- The Val is the evaluation result of the program
   -- The list of String is what gets printed while running the program
+  deriving Show
 
 
 -- | execute the program as a string and get the result

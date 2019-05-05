@@ -37,7 +37,10 @@ stdLib = Map.fromList
    ("head", Fun $ \ v -> case v of Ls (x:_) -> (Ok x, [])
                                    _        -> (Error "can only call head on a non empty list", [])),
    ("len", Fun $ \ v -> case v of Ls x -> (Ok (I $ len x), [])
-                                  _    -> (Error "can only call len on a non empty list", []))]
+                                  _    -> (Error "can only call len on a non empty list", [])),
+   ("elem", Fun $ \ e -> case e of Fun _ -> (Error "cannot compare funtions", [])
+                                   _     -> (Ok (Fun $ \l -> case l of Ls [Fun _] -> (Error "cannot compare funtions", [])
+                                                                       _     -> run (Index e l))))]
 len [] = 0
 len (x:xs) = 1 + (len xs)
 -- helper function that runs with a standard library of functions: head, tail ...
@@ -64,6 +67,12 @@ eval (Not x) =
      return $ B $ not x'
 eval (ValInt x) = return $ I x
 eval (ValFlo f) = return $ F f
+eval (UnaryMinus x) =
+  do x' <- eval x
+     case x' of
+       I i -> return $ I $ 0 - i
+       F f -> return $ F $ 0 - f
+       _ -> err "not a number"
 eval (Plus x y) =
   do x' <- eval x
      y' <- eval y
@@ -98,29 +107,25 @@ eval (Mult x y) =
                 _ -> err "not same type"
        _ -> err "not a number"
 eval (Div x y) =
-  do x' <- eval x
-     y' <- eval y
-     case x' of
-       I i -> case y' of
-         I 0 -> err "divied by 0"
-         I i' -> return $ I $ i `div` i'
-         _ -> err "not same type"
-       F f -> case y' of
-         F 0 -> err "divied by 0"
-         F f' -> return $ F $ f / f'
-         _ -> err "not same type"
-       _ -> err "not a number"
+  do x' <- evalInt x
+     y' <- evalInt y
+     if y' == 0
+     then err "divied by 0"
+     else return $ I $ x' `div` y'
+eval (FDiv x y) =
+  do x' <- evalFlo x
+     y' <- evalFlo y
+     if y' == 0
+     then err "divied by 0"
+     else return $ F $ x' / y'
 eval (Exp x y) =
-  do x' <- eval x
-     y' <- eval y
-     case x' of
-       I i -> case y' of
-                I i' -> return $ I $ i ^ i'
-                _ -> err "not same type"
-       F f -> case y' of
-                F f' -> return $ F $ f ** f'
-                _ -> err "not same type"
-       _ -> err "not a number"
+  do x' <- evalInt x
+     y' <- evalInt y
+     return $ I $ x' ^ y'
+eval (FExp x y) =
+  do x' <- evalFlo x
+     y' <- evalFlo y
+     return $ F $ x' ** y'
 eval (Mod x y) =
   do x' <- evalInt x
      y' <- evalInt y
@@ -169,7 +174,6 @@ eval (Ge x y) =
                 F f' -> return $ B $ f >= f'
                 _ -> err "not same type"
        _ -> err "not a number"
---
 eval (Eq x y) =
   do x' <- eval x
      y' <- eval y
@@ -178,17 +182,29 @@ eval (Eq x y) =
        _ -> case y' of
               Fun f' -> err "cannot compare functions"
               _ -> return $ B $ x' == y'
-eval (UEq x y) =
+eval (NEq x y) =
   do r <- eval (Eq x y)
      case r of
        B True -> return $ B False
        B False -> return $ B True
        _ -> return r
+eval (ValChar c) = return $ C c
+eval (ValStr s) = return $ S s
 eval Nil = return $ Ls []
 eval (Cons x y) =
   do x' <- eval x
      y' <- evalLs y
      return $ Ls $ x' : y'
+eval (Index l i) =
+  do l' <- evalLs l
+     i' <- evalInt i
+     if (len l') <= i'
+     then err ("cannot get elemnt " ++ (show i') ++ " from a " ++ (show (len l')) ++ " elemnt list")
+     else return $ index l' i'
+eval (CPlus x y) =
+  do x' <- evalLs x
+     y' <- evalLs y
+     return $ Ls $ x' ++ y'
 eval (If x y z) =
   do x' <- evalBool x
      y' <- eval y
@@ -205,6 +221,14 @@ eval (Var s) =
      case Map.lookup s env of
        Just a -> return a
        _ -> err "variable not in the scope"
+eval (Print p) =
+  do p' <- eval p
+     EnvUnsafe (\e -> (Ok (), [show p']))
+     return p'
+eval (Sep x y) =
+  do x' <- eval x
+     y' <- eval y
+     return y'
 eval (Lam s x) =
   do env <- getEnv
      return $ Fun $ \v -> runEnvUnsafe (eval x) (Map.insert s v env)
@@ -223,6 +247,13 @@ evalInt a =
      case a' of
        I i -> return i
        _ -> err "not an Integer"
+
+evalFlo :: Ast -> EnvUnsafe Env Float
+evalFlo a =
+  do a' <- eval a
+     case a' of
+       F f -> return f
+       _ -> err "not a Float"
 
 evalBool :: Ast -> EnvUnsafe Env Bool
 evalBool a =
@@ -244,3 +275,8 @@ evalLs a =
      case a' of
        Ls i -> return i
        _ -> err "not a List"
+
+index :: [Val] -> Integer -> Val
+index (x:xs) 0 = x
+index (x:xs) n = index xs (n-1)
+index [] _ = S "Shit!"

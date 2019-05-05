@@ -18,7 +18,7 @@ instance Arbitrary Ast where
 arbitrarySizedAst ::  Int -> Gen Ast
 arbitrarySizedAst m | m < 1 = do i <- arbitrary
                                  b <- arbitrary
-                                 node <- elements [ValInt i, ValBool b, Nil]
+                                 node <- elements [ValInt i, ValFlo f, ValBool b, Nil]
                                  return $ node
 arbitrarySizedAst m | otherwise = do l <- arbitrarySizedAst (m `div` 2)
                                      r <- arbitrarySizedAst (m `div` 2)

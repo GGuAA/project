@@ -9,11 +9,11 @@ import Data.Char
 data Parser a = Parser (String -> Maybe (a, String))
 
 -- | invoke a parser
--- 	
--- >>> parese (literal "test") "test1" 	
--- Just ("test", "1")	
--- 	
--- >>> parese (literal "test") "hello" 	
+--
+-- >>> parese (literal "test") "test1"
+-- Just ("test", "1")
+--
+-- >>> parese (literal "test") "hello"
 -- Nothing
 parse :: Parser a -> (String -> Maybe (a, String))
 parse (Parser f) = f
@@ -33,17 +33,37 @@ instance Applicative Parser where
 
 instance Monad Parser where
   -- turns a input structure into a parser
-  -- by constructing a parser that 
+  -- by constructing a parser that
   --  * returns the input structure
   --  * do not change the string that is parsing
   return a =  Parser $ \ x -> Just (a,x)
 
 
   --(>>=) :: Parser a -> (a -> Parser b) -> Parser b
-  (Parser pa) >>= f = Parser $ \ x ->  case pa x of
-                                         Nothing       -> Nothing
-                                         Just (a,rest) -> parse (f a) rest
+  p >>= f = Parser $ \ x ->  case parse p x of
+                                  Nothing       -> Nothing
+                                  Just (a,rest) -> parse (f a) rest
 
+-- always check multiline comments first
+coms :: Parser String
+coms = do token $ literal "--"
+          rep (sat (\s -> s /= '\n'))
+          (coms <|> return "")
+
+multicoms :: Parser String
+multicoms = do token $ literal "{-"
+               multicoms'
+
+multicoms' :: Parser String
+multicoms' = do r <- token (literal "-}") <||> sat (\s -> True)
+                case r of
+                  Left _ -> (multicoms <|> return "")
+                  _ -> multicoms'
+
+com f = Parser $ \x -> case parse ((multicoms <|> coms) <||> f) x of
+                            Nothing -> Nothing
+                            Just (Left _, s) -> parse f s
+                            Just (Right a, rest) -> Just (a, rest)
 
 -- | parse one thing, if that works then parse the other thing
 -- return both result in a pair
@@ -59,8 +79,8 @@ mapParser pa f = fmap f pa
 
 -- | just read a char (from book)
 -- and return the char itself
--- 
--- >>> parse item "any string" 
+--
+-- >>> parse item "any string"
 -- Just ("a", "ny string")
 item :: Parser Char
 item = Parser $ \ input -> case input of ""    -> Nothing
@@ -73,11 +93,11 @@ failParse = Parser $ \ input -> Nothing
 
 
 -- | read in a char if it satisfy some property (from book)
--- 
+--
 -- >>> parse (sat isDigit) "456"
 -- Just ("4", "56")
 --
--- >>> parse (sat isDigit) "any string" 
+-- >>> parse (sat isDigit) "any string"
 -- Nothing
 sat :: (Char -> Bool) -> Parser Char
 sat p = do c <- item
@@ -87,11 +107,11 @@ sat p = do c <- item
 
 
 -- | parse exactly a string, return that string (in book as the poorly named "string")
--- 
--- >>> parese (literal "test") "test1" 
+--
+-- >>> parese (literal "test") "test1"
 -- Just ("test", "1")
--- 
--- >>> parese (literal "test") "hello" 
+--
+-- >>> parese (literal "test") "hello"
 -- Nothing
 literal :: String  -- ^ the string to match
           -> Parser String  -- ^ the parser that match exactly the input string
@@ -105,7 +125,7 @@ literal (h:t) = do sat (==h)
 -- then return either the first result (if the first parse is successful)
 -- or the second result (if the first parse is not successful and the second is successful)
 -- in a either type.
--- 
+--
 -- if both are not successful then fail.
 (<||>) :: Parser a  -- ^ try this parser first
         -> Parser b  -- ^ if the first parser fails, try this parser
@@ -171,7 +191,7 @@ token pa = do spaces
 
 -- parse what we will consider a good variable name
 varParser :: Parser String
-varParser = 
+varParser =
   do head <- sat isAlpha
      tail <- rep (sat isAlpha <|> digit <|>  sat (=='\''))
      return $ head : tail
@@ -189,12 +209,21 @@ withInfix pa ls = let operators = fmap fst ls
                       opParsers = fmap (\ s -> token $ literal s) operators
 
                       --innerParser :: a -> Parser a, where a is the same as above
-                      innerParser left = do s <- oneOf opParsers
-                                            next <- pa
+                      innerParser left = do s <- com (oneOf opParsers)
+                                            next <- com pa
                                             case lookup s ls of
                                               Nothing -> failParse
                                               Just f ->  let out = f left next
                                                          in (innerParser out) <|> return out
-                   in do l <- pa
+                   in do l <- com pa
                          (innerParser l) <|> (return l)
 
+boolInfix :: Parser a -> [(String, a -> a -> a)] -> Parser a
+boolInfix pa ls = let operators = fmap fst ls
+                      opParsers = fmap (\ s -> token $ literal s) operators
+                  in  do l <- com pa
+                         s <- com (oneOf opParsers)
+                         r <- com pa
+                         case lookup s ls of
+                           Nothing -> failParse
+                           Just f -> return $ f l r
